@@ -93,7 +93,7 @@ player endp
 
 delay proc
 	push cx
-	mov cx, 1
+	mov cx, 100
 	d1:
 	push cx
 	mov cx, 0FFFFh
@@ -105,12 +105,10 @@ delay proc
 	ret
 delay endp
 
-main:
-	mov ax, @data
-	mov ds, ax
-	mov ax,0A000h
-	mov es, ax
-
+display_config proc
+	push ax
+	push bx
+	
 	;GRAPHIC MODE (1280x1024x256)
 	mov ax, 4F02h
 	mov bx, 107h
@@ -120,24 +118,38 @@ main:
 	mov bx, 0
 	mov ax, 1003h
 	int 10h
+	
+	pop bx
+	pop ax
+	ret
+display_config endp
 
-mov bx, 0
-fall:
-	call delay
-	call clear
-	call player
-	add [y], 20
-	cmp [y], 994 ; 1024-addition(20)-10(half of player height)
-	jl fall
 
-jump:
-	call delay
-	call clear
-	call player
-	sub [y], 20
-	cmp [y], 492 ; 512-substraction(10)
-	jg jump
-	jmp fall
+main:
+	mov ax, @data
+	mov ds, ax
+	mov ax,0A000h
+	mov es, ax
+
+	call display_config
+
+	mov bx, 0
+	fall:
+		call delay
+		call clear
+		call player
+		add [y], 20
+		cmp [y], 994 ; 1024-addition(20)-10(half of player height)
+		jl fall
+
+	jump:
+		call delay
+		call clear
+		call player
+		sub [y], 20
+		cmp [y], 492 ; 512-substraction(10)
+		jg jump
+		jmp fall
 
 ; Wait for key press
 mov ah,00h
