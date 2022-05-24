@@ -1,7 +1,6 @@
 model small
-.386
-locals @@
 stack 100h
+.386
 
 .data
   ;___________bmp info___________
@@ -18,13 +17,16 @@ stack 100h
   px          dw       ?
   py          dw       ?
   buff        db       200*100 dup ('b')
+  cbuff       db       180*92 dup ('c')
   step        dw       35
   rand        dw       ?
   prand       dw       ?
-  score       dw       0
-  scoremsg    db       'SCORE: $'
-  safe        db       0
+  safe        dw       0
   sky         dw       1023
+  r           dw       0
+  msg         db       'SCORE:   $'
+  score       dw       0,'$'
+
 
   ;___________bmp filenames___________
   player      db       'player.bmp',0
@@ -92,7 +94,7 @@ ____________________________________bmp_procs__________________________________:
     out dx, al                         ; Copy starting color to port 3C8h
     inc dx                             ; Copy palette itself to port 3C9h
     sendLoop:                              ; Note: Colors in a BMP file are saved as BGR values rather than RGB.
-    r:  mov al, [si+2]
+    re:  mov al, [si+2]
         shr al, 2                          ; Max is 255, video only allows up to 63, therefore div by 4
         out dx, al
     g:  mov al, [si+1]
@@ -106,14 +108,44 @@ ____________________________________bmp_procs__________________________________:
     ret
   endp
 
+  closeFile proc
+    ; Closes a file.
+    ; I/O: NONE
+    mov bx, handle
+    mov ah, 3eh
+    int 21h
+    ret
+  endp
+
   loadBMP proc
     ; Copies the file's palette to the video memory.
     ; I/O: NONE
 
-    mov cx, bmpH ; height
+    mov cx, bmpH; height
     mov dx, y ; bottom-left y coordinate
-    lea di, buff
 
+    sload:
+    cmp bmpH, 329
+    jne bload
+    lea di, buff
+    jmp row
+
+    bload:
+    cmp bmpH, 1024
+    jne pload
+    dec cx
+    jmp row
+
+    pload:
+    cmp bmpH, 200
+    jne cload
+    lea di, buff
+    jmp row
+
+    cload:
+    cmp bmpH, 92
+    jne row
+    lea di, cbuff
 
     row:
       push cx dx
@@ -130,7 +162,11 @@ ____________________________________bmp_procs__________________________________:
         mov al, [si] ; color
 
         cmp bmpW, 100
+        je buffcpy
+        cmp bmpW, 180
         jne check
+
+        buffcpy:
         push ax
         mov ah, 0dh
         int 10h
@@ -155,18 +191,43 @@ ____________________________________bmp_procs__________________________________:
     ret
   endp
 
-  closeFile proc
-    ; Closes a file.
+  saveBuffer proc
+    ; Copies the file's palette to the video memory.
     ; I/O: NONE
-    mov bx, handle
-    mov ah, 3eh
-    int 21h
+    pusha
+
+    mov cx, 200 ; height
+    mov dx, y ; bottom-left y coordinate
+    lea di, buff
+
+    bRow: ; for 200 times
+      push cx
+      mov cx, 100 ; width
+
+      bPixel: ; for 100 times
+        push cx
+        add cx, x
+        mov ah, 0dh
+        int 10h
+        mov [di], al ; save to buffer
+
+        bSkip:
+        inc di ; buffer ptr
+        pop cx
+        loop bPixel
+
+      pop cx
+      dec dx ; go up a line
+      loop bRow
+
+    popa
     ret
   endp
 
   showBMP proc
     ; Copies the file's palette to the video memory.
     ; I/O: NONE
+    pusha
     call openFile
     call readHeader
     call info
@@ -174,10 +235,12 @@ ____________________________________bmp_procs__________________________________:
     call sendPal
     call loadBMP
     call closeFile
+    popa
     ret
   endp
 
   hideBMP proc
+    pusha
     ; Erases the bmp
     ; I/O: NONE
     call openFile
@@ -189,31 +252,53 @@ ____________________________________bmp_procs__________________________________:
 
     mov cx, bmpH ; height
     mov dx, y ; bottom-left y coordinate
+    cmp bmpH, 200
+    jne .cload
     lea di, buff
+    jmp .row
 
-    row2:
+    .cload:
+    cmp bmpH, 92
+    jne row
+    lea di, cbuff
+
+    .row:
       push cx
       mov cx, bmpW ; width
 
-      pixel2:
+      .pixel:
         push cx
-        mov al, [di] ; color
         add cx, x
-        print2:
+        mov al, [di] ; color
         mov ah, 0ch
         int 10h
         inc di
         pop cx
-      loop pixel2
+      loop .pixel
 
       pop cx
       dec dx ; go up a line
-    loop row2
+    loop .row
 
+    popa
     ret
   endp
-
 ____________________________________other_procs________________________________:
+
+  delay proc
+    ; create delay with loops
+      push cx
+      mov cx, 50
+      d1:
+      push cx
+      mov cx, 0FFFFh
+      d2:
+      loop d2
+      pop cx
+      loop d1
+      pop cx
+      ret
+  endp
 
   screen proc
     ; Configures segments and makes the display 1280x1024.
@@ -230,164 +315,116 @@ ____________________________________other_procs________________________________:
     ret
   endp
 
-  movement proc
-    ; Check if 'a', 'q', or 'd' keys have been pressed and update coordinates accordingly.
-    ; I/O: NONE +4 x +6 y
-    push bp
-    mov bp, sp
-    push ax
-    mov ah, 0
-    int 16h
-
-    a:
-    cmp al, 'a'
-    jne d
-    cmp x, 100
-    jl leftBorder ; too left
-    sub x, 100
-    jmp moveEnd
-
-    leftBorder:
-    cmp x, 0 ; on border
-    jne moveToLeft
-    mov x, 1280-100-1 ; switch side
-    jmp moveEnd
-
-    moveToLeft:
-    mov x, 0
-    jmp moveEnd
-
-    d:
-    cmp al, 'd'
-    jne q
-    cmp x, 1280-100-2
-    jg rightBorder ; too right
-    add x, 100
-    jmp moveEnd
-
-    rightBorder:
-    cmp x, 1280-100-1 ; on border
-    jne moveToRight
-    mov x, 0 ; switch side
-    jmp moveEnd
-
-    moveToRight:
-    mov x, 1280-100-1
-    jmp moveEnd
-
-    q:
-    cmp al, 'q'
-    jne moveEnd
-    pop ax
-    call quitScreen
-
-    moveEnd:
-    pop ax
-    pop bp
-    ret
-  endp
-
   random proc
     ; Generates a random number between 180-1100 using the xoroshift16+ algorithm.
     ; I/O: NONE/rand
+    push bp
+    mov bp, sp
     push ax bx cx dx
 
     time:
-    push 40h ; system time
-    pop es
-    mov ax, es:6Ch
+      push 40h ; system time
+      pop es
+      mov ax, es:6Ch
 
     algo:
-    xor ah, al ; xoroshift 16+ algorithm
-    mov cl, al
-    rol cl, 6
-    xor cl, ah
-    mov ch, cl
-    shl ch, 1
-    xor cl, ch
-    mov al, cl
-    mov ch, ah
-    rol ch, 3
-    mov ah, ch ; random number goes to ax
+      xor ah, al ; xoroshift 16+ algorithm
+      mov cl, al
+      rol cl, 6
+      xor cl, ah
+      mov ch, cl
+      shl ch, 1
+      xor cl, ch
+      mov al, cl
+      mov ch, ah
+      rol ch, 3
+      mov ah, ch ; random number goes to ax
 
     range:
-    mov dx, 0
-    mov cx, 550
-    div cx
-    shl dx, 1
-    mov ax, dx
-    cmp dx, 180
-    jg endrand
-    mov dx, 180  ; random number is between 180-1100
+      mov dx, 0
+      mov cx, 550
+      div cx
+      shl dx, 1
+      mov ax, dx
+      cmp dx, 180
+      jg endrand
+      mov dx, 180  ; random number is between 180-1100
 
     endrand:
-    mov rand, dx
-    pop dx cx bx ax
-    ret
+      mov bx, [bp+4]
+      mov [bx], dx
+      pop dx cx bx ax bp
+      ret 2
   endp
 
   quitScreen proc
     ; Displays a screen with an option to restart and an option to quit the game.
-    ; I/O: NONE
-    push ax dx
-    mov x, 246
-    mov y, 698
+    ; I: sky, safe, score, step, r
+    push bp
+    mov bp, sp
+
+    push ax dx si di
+    mov di, [bp+16] ; off x
+    mov [di], 246
+    mov si, [bp+14] ; off y
+    mov [si], 698
     lea dx, quit
     call showBMP
 
+    pusha
+    mov bx, [bp+8]
+    mov ax, [bx]
+    mov bl, 10
+    div bl
+    mov di, [bp+18]
+    mov [di+7], al
+    add [di+7], '0'
+    mov [di+8], ah
+    add [di+8], '0'
+
+    mov dx, [bp+18]
+    mov ah, 9
+    int 21h
+    popa
+
+
     quitkey:
-    mov ah, 0
-    int 16h
+      mov ah, 0
+      int 16h
 
     finalquit:
-    cmp al, 'q'
-    jne restart
-    pop dx ax
-    mov ax, 2
-    int 10h
-    mov ah, 4ch
-    int 21h
+      cmp al, 'q'
+      jne restart
+      pop dx ax
+      mov ax, 2
+      int 10h
+      mov ah, 4ch
+      int 21h
 
     restart:
-    cmp al, 'r'
-    jne quitkey
+      cmp al, 'r'
+      jne quitkey
+      push bx
+      mov [di], 0
+      mov [si], 1023
+      mov bx, [bp+10]
+      mov [bx], 35
+      mov bx, [bp+8]
+      mov [bx], 0
+      mov bx, [bp+4]
+      mov [bx], 1023
+      mov bx, [bp+6]
+      mov [bx], 0
+      mov bx, [bp+12]
+      mov [bx], 1
 
-    mov x, 0
-    mov y, 1023
-    mov step, 35
-    mov score, 0
-    mov sky, 1023
-    mov safe, 0
-    pop dx ax
-    jmp startscreen
-    ret
-  endp
-
-  showScore proc
-    pusha
-
-    lea di, [scoremsg + 14]
-    mov ax, score
-
-    mov bx, 10
-    more:
-     mov dx, 0
-     div bx         ; This divides DX:AX by BX
-     dec di
-     add dl, '0'    ; Turn remainder into a character
-     mov [di], dl   ; Write in string
-     test ax, ax
-     jnz more
-
-     lea dx, scoremsg
-     mov ah, 9
-     int 21h
-
-    popa
-    ret
+    pop bx di si dx ax bp
+    ret 16
   endp
 
   gameStart proc
+    push bp
+    mov bp, sp
     pusha
     call screen
     startScreen:
@@ -399,10 +436,22 @@ ____________________________________other_procs________________________________:
       cmp al, 'i'
       je instructions
       cmp al, 13 ; enter key
-      je game
+      je gameBackground
       cmp al, 'q'
+      jne key
+      push [bp+18] ; msg
+      push [bp+16] ; x off
+      push [bp+14] ; y off
+      push [bp+12] ; r
+      push [bp+10] ; step
+      push [bp+8] ; score
+      push [bp+6] ; safe
+      push [bp+4] ; sky
       call quitScreen
-      jmp key
+      mov bx, [bp+12]
+      cmp [bx], 1
+      jne key
+      jmp ssend
 
     instructions:
       lea dx, inst
@@ -413,191 +462,421 @@ ____________________________________other_procs________________________________:
       cmp al, 'b'
       je startScreen
       cmp al, 'q'
+      jne .key
+      push [bp+18] ; msg
+      push [bp+16] ; x off
+      push [bp+14] ; y off
+      push [bp+12] ; r
+      push [bp+10] ; step
+      push [bp+8] ; score
+      push [bp+6] ; safe
+      push [bp+4] ; sky
       call quitScreen
-      jmp .key
+      mov bx, [bp+12]
+      cmp [bx], 1
+      jne .key
+      jmp ssend
 
     gameBackground:
-      mov y, 1023
-      mov x, 0
+      mov di, [bp+16] ; x off
+      mov si, [bp+14] ; y off
+      mov [di], 0
+      mov [si], 1023
       lea dx, background
       call showBMP
+
+      push [bp+18] ; rand
+      push [bp+14]
+      push [bp+16] ; y x
+      call newCloud
+
+    ssend:
       popa
-      ret
+      pop bp
+      ret 18
   endp
 
   newCloud proc
-    pusha
-    push x y
+    push bp
+    mov bp, sp
+
+    push dx bx
+
+    mov di, [bp+4]
+    mov si, [bp+6]
+    mov bx, [bp+8] ; rand
+    push [di]
+    push [si]
+
+    push bx
     call random
-    mov dx, rand
-    mov y, 400
-    mov x, dx
+    mov bx, [bp+8]
+
+    mov dx, [bx]
+
+    mov [di], dx
+    mov [si], 400
     lea dx, cloud
     call showBMP
-    pop y x
-    popa
-    ret
+
+    pop [si]
+    pop [di]
+    pop bx dx bp
+    ret 6
+  endp
+____________________________________movement_procs_____________________________:
+
+  movement proc
+    ; Check if 'a', 'q', or 'd' keys have been pressed and update coordinates accordingly.
+    ; I/O: ; x 4, y 6, px 8, py 10 r 12 step 14 score 16 safe 18 sky 20
+    push bp
+    mov bp, sp
+
+    mov di, [bp+4]
+    mov si, [bp+6]
+    push [di] ; x
+    push [si] ; y
+    push ax
+    mov ah, 0
+    int 16h
+
+    a:
+      cmp al, 'a'
+      jne d
+      cmp [di], 100
+      jl leftBorder ; too left
+      sub [di], 100
+      jmp moveEnd
+
+      leftBorder:
+      cmp [di], 0 ; on border
+      jne moveToLeft
+      mov [di], 1280-100-1 ; switch side
+      jmp moveEnd
+
+      moveToLeft:
+      mov [di], 0
+      jmp moveEnd
+
+    d:
+      cmp al, 'd'
+      jne q
+      cmp [di], 1280-100-2
+      jg rightBorder ; too right
+      add [di], 100
+      jmp moveEnd
+
+      rightBorder:
+      cmp [di], 1280-100-1 ; on border
+      jne moveToRight
+      mov [di], 0 ; switch side
+      jmp moveEnd
+
+      moveToRight:
+      mov [di], 1280-100-1
+      jmp moveEnd
+
+    q:
+      cmp al, 'q'
+      jne moveEnd
+      pop ax
+
+      push [bp+22] ; msg
+      push [bp+4] ; x off
+      push [bp+6] ; y off
+      push [bp+12] ; r
+      push [bp+15] ; step
+      push [bp+16] ; score
+      push [bp+18] ; safe
+      push [bp+20] ; sky
+      call quitScreen
+      push bx
+      mov bx, [bp+12]
+      cmp [bx], 1
+      je preSkip
+      pop bx
+      jmp moveEnd
+
+      preSkip:
+        pop bx
+        jmp skipmoveEnd
+
+    moveEnd:
+      push bx
+      mov bx, [bp+8]
+      mov ax, [di]
+      mov [bx], ax
+      mov bx, [bp+10]
+      mov ax, [si]
+      mov [bx], ax
+
+      pop bx ax ax bx
+      push ax bx
+      mov [si], ax
+      mov [di], bx
+
+    skipmoveEnd:
+      pop bx ax bp
+      ret 20
   endp
 
-  ; clear proc
-  ;   ; Clears screen.
-  ;   ; I/O: None.
-  ;   pusha
-  ;
-  ;   mov cx, 1279
-  ;   mov dx, 1023
-  ;   mov al, 0fch
-  ;
-  ;   sky_loop:
-  ;     mov ah, 0ch
-  ;     int 10h
-  ;     loop sky_loop
-  ;     dec dx
-  ;     cmp dx, 420
-  ;     jg sky_loop
-  ;
-  ;   popa
-  ;   ret
-  ; endp
+  fallCheck proc
+    push bp
+    mov bp, sp
+    push ax dx bx di si
 
-____________________________________main_______________________________________:
-  main:
-    call gameStart
+    mov di, [bp+16] ; x off
+    mov si, [bp+14] ; y off
 
-    game:
-      mov y, 1023
-      mov x, 0
+    mov bx, [bp+20]
+    cmp [bx], 1
+    jl fcEnd
+    cmp y, 765
+    jl fcEnd
+    mov bx, [bp+18]
+    mov ax, [bx]
+    add ax, 180
+    cmp [di], ax
+    jg fell
+    mov ax, [di]
+    add ax, 100
+    cmp ax, [bx]
+    jge fcEnd
+
+    fell:
+      fellLoop:
+      add [si], 40
+      lea dx, player
+      call showBMP
+      call hideBMP
+      cmp [si], 1600
+      jl fellLoop
+      push [bp+22] ; msg
+      push [bp+16] ; x off
+      push [bp+14] ; y off
+      push [bp+12] ; r
+      push [bp+10] ; step
+      push [bp+8] ; score
+      push [bp+6] ; safe
+      push [bp+4] ; sky
+      call quitScreen
+
+    fcEnd:
+    pop si di bx dx ax bp
+    ret 20
+  endp
+
+  cloudTouch proc
+    push bp
+    mov bp, sp
+    push dx ax di si
+
+    mov di, [bp+4] ; x
+    mov si, [bp+6] ; y
+
+    push [di]
+    push [si]
+
+    cmp [si], 380
+    jl noTouch
+    cmp [si], 400
+    jg noTouch
+
+    mov bx, [bp+12]
+    mov ax, [di]
+    add ax, 100
+    cmp ax, [bx]
+    jl noTouch
+    mov ax, [bx]
+    add ax, 180
+    cmp [di], ax
+    jg noTouch
+
+    mov bx, [bp+8]
+    cmp [bx], 1
+    jg notfr
+
+    firstRound:
+      mov bx, [bp+8]
+      cmp [bx], 1
+      je secondRound
+      mov [si], 1400
+      jmp srskip
+
+    secondRound:
+      mov [si], 1650
+
+    srskip:
+      mov [di], 0
       lea dx, background
       call showBMP
+      jmp cloudNext
 
-      mov y, 800 ; beginning player
-      mov x, 590
+    notfr:
+      mov [si], 892
+      mov bx, [bp+10]
+      push [bx]
+      pop [di]
+      lea dx, cloud
+      call hideBMP
 
-      randomCloud:
-        call newcloud
+    cloudNext:
+      mov [si], 400
+      mov bx, [bp+12]
+      push [bx]
+      pop [di]
+      lea dx, cloud
+      call hideBMP
+      add [si], 40
 
-      jump:
-        cmp step, 0
-        je fall
-        cmp step, -36
-        jne pass
+    cloudDown:
+      lea dx, cloud
+      call showBMP
+      call hideBMP
+      add [si], 40
+      cmp [si], 892
+      jge cloudEnd
+      jmp cloudDown
 
-      fall:
-        neg step
-        cmp step, 36
-        jne pass
-        dec step
+    cloudEnd:
+      mov [si], 892
+      call showBMP
+      mov bx, [bp+12]
+      push [bx]
+      mov bx, [bp+10]
+      pop [bx]
 
-      pass:
-        mov dx, step
-        sub y, dx
-        dec step
-        lea dx, player
-        call showBMP
+      push [bp+12] ; rand
+      push [bp+6]
+      push [bp+4] ; y x
+      call newCloud
+      mov bx, [bp+8]
+      inc [bx]
 
-        mov ah, 1
-        int 16h
-        jnz move
-        lea dx, player
-        call hideBMP
-        jmp cloudCheck
+    noTouch:
+      pop [si]
+      pop [di]
+      pop si di ax dx bp
+      ret 10
+  endp
+____________________________________main_______________________________________:
+  main:
+    mov r, 0
+
+    push offset msg ; msg
+    push offset rand
+    push offset x ; x off
+    push offset y ; y off
+    push offset r ; r
+    push offset step ; step
+    push offset score ; score
+    push offset safe ; safe
+    push offset sky ; sky
+    call gameStart
+
+    cmp r, 1
+    je main
+
+    mov x, 550
+    mov y, 800
+    upLoop:
+      lea dx, player
+      call showBMP
+      mov ah, 1
+      int 16h
+      jz noMove
 
       move:
-        push x y
+        push offset msg
+        push offset sky
+        push offset safe
+        push offset score
+        push offset step
+        push offset r
+        push offset py
+        push offset px
+        push offset y
+        push offset x
         call movement
-        pop py px
-        push x y
-        mov ax, px
-        mov x, ax
-        mov ax, py
-        mov y, ax
-        lea dx, player
+        cmp r, 1
+        je .restart
         call hideBMP
-        pop y x
+        push py px
+        pop x y
+        cmp r, 1
+        je .restart
+        jmp newStep
 
-      cloudCheck:
-        push x y
+      noMove:
+        call hideBMP
 
+      newStep:
+        mov ax, step
+        sub y, ax
+        dec step
         cmp step, 0
-        jg notTouching ; falling
+        jne upLoop
 
-        cmp y, 400-92
-        jg notTouching
-        cmp y, 365-92
-        jl notTouching ; in range of cloud
+    downLoop:
+      push offset msg
+      push offset score
+      push offset prand
+      push offset x ; x off
+      push offset y ; y off
+      push offset r ; r
+      push offset step ; step
+      push offset score ; score
+      push offset safe ; safe
+      push offset sky ; sky
+      call fallCheck
+      cmp r, 1
+      je .restart
+      lea dx, player
+      call showBMP
+      mov ah, 1
+      int 16h
+      jz .noMove
 
-        mov dx, x
-        add dx, 99
-        cmp dx, rand
-        jl notTouching ; to the left
-        mov dx, rand
-        add dx, 191
-        cmp dx, x
-        jl notTouching ; to the right
+      .move:
+        push offset msg
+        push offset sky
+        push offset safe
+        push offset score
+        push offset step
+        push offset r
+        push offset py
+        push offset px
+        push offset y
+        push offset x
+        call movement
+        cmp r, 1
+        je .restart
+        call hideBMP
+        push py px
+        pop x y
+        jmp .newStep
 
-        pop y x
-        jmp isTouching
-
-      notTouching:
-        pop y x
-
-        cmp y, 800 ; 891
-        jl notFalling; in range of cloud
-
-        mov dx, x
-        add dx, 99
-        cmp dx, prand
-        jng falldeath ; to the left
-
-        mov dx, prand
-        add dx, 191
-        cmp dx, x
-        jl falldeath ; to the right
-
-        jmp notFalling
-
-      falldeath:
-        call quitScreen
-
-      notFalling:
-        jmp jump
-
-      isTouching:
-        inc score
-        push x y
-        mov y, 400
-        mov dx, rand
-        mov x, dx
-        lea dx, cloud
+      .noMove:
         call hideBMP
 
-        inc safe
-        cmp safe, 3
-        jg hbg
+      .newStep:
+        push offset rand
+        push offset prand
+        push offset score
+        push offset y
+        push offset x
+        call cloudTouch
+        mov ax, step
+        add y, ax
+        inc step
+        cmp y, 800
+        jl downLoop
+        mov y, 800
+        mov step, 35
+        jmp upLoop
 
-        add sky, 200
-        mov dx, sky
-        mov y, dx
-        mov x, 0
-        lea dx, background
-        call showbmp
+      .restart:
+    jmp main
 
-      hbg:
-        mov y, 891
-        mov dx, prand
-        mov x, dx
-        lea dx, cloud
-        call hideBMP
-
-        mov dx, rand
-        mov x, dx
-        lea dx, cloud
-        call showBMP
-
-        mov dx, x
-        mov prand, dx
-
-        pop y x
-        jmp randomCloud
-
+    .exit
   end main
